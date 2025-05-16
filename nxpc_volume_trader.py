@@ -1,117 +1,122 @@
 """
-nxpc_volume_trader.py
+nxpc_volume_trader_v5.py
 
 Description:
-    Bybit API script to efficiently inflate NXPCUSDT trading volume in order to secure the maximum 14,000 NXPC reward in the Tokensplash 活動 using limited capital.
+    使用 Bybit Open API V5，以 Maker 掛單方式刷 NXPCUSDT 交易量，確保獲得 14,000 NXPC 獎勵。
 
 Features:
-    - Calculates required total trading volume based on pool and participants
-    - Loops limit buy & sell (maker-only) orders to inflate volume
-    - Configurable order size, target volume, and price spread
-    - Robust HMAC-SHA256 signing for Bybit Spot API
-    - Logging of each loop’s volume and any errors into `nxpc_trader.log`
-
-Requirements:
-    pip install requests
+    - V5 API: GET /v5/market/tickers 查詢最新價格 :contentReference[oaicite:0]{index=0}
+    - V5 API: POST /v5/order/create 下 Limit 掛單 :contentReference[oaicite:1]{index=1}
+    - HMAC-SHA256 簽名：timestamp+apiKey+recvWindow+body :contentReference[oaicite:2]{index=2}
+    - 內建日誌記錄到 nxpc_trader_v5.log
 """
-import requests
+
 import time
 import hmac
 import hashlib
 import logging
+import json
+import requests
+from urllib.parse import urlencode
 
 # === Configuration ===
-API_KEY = "YOUR_API_KEY"
-API_SECRET = "YOUR_API_SECRET"
-BASE_URL = "https://api.bybit.com"
-PAIR = "NXPCUSDT"
-INITIAL_CAPITAL = 1000.0      # USDT available for margin
-ORDER_SIZE = 1000.0           # USDT per order side (<= INITIAL_CAPITAL)
-# Total trading volume needed (USDT) to secure 14,000 NXPC:
-#   Required ratio = 14,000 / 9,000,000 ≈ 0.0015556
-#   If each of 600k participants trades ≥500 USDT, total ≈600k*500=300,000,000 USDT
-#   V_needed = 0.0015556 * 300,000,000 ≈ 466,667 USDT
-TARGET_VOLUME = 466667.0      # USDT total volume target
-PRICE_SPREAD = 0.0001         # Limit order offset (0.01%)
-FEE_RATE = 0.001              # Maker fee rate (0.1% for non-VIP)
+API_KEY     = "8auAdibh8y2tPnngHV"
+API_SECRET  = "4y5tGfmGz2wZeoSBh6wWwdYAha8J8iQWNo9C"
+BASE_URL    = "https://api.bybit.com"
+PAIR        = "NXPCUSDT"
+RECV_WINDOW = "5000"       # 預設簽名驗證時效
+ORDER_SIZE  = 1000.0       # USDT per side
+TARGET_VOLUME = 466667.0   # USDT total volume target
+PRICE_SPREAD  = 0.0001     # 0.01% 價差
 
 # === Logging Setup ===
 logging.basicConfig(
-    filename="nxpc_trader.log",
+    filename="nxpc_trader_v5.log",
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s"
 )
 
-def sign(params: dict, secret: str) -> str:
+def sign(timestamp: str, api_key: str, recv_window: str, body: str) -> str:
     """
-    Create HMAC-SHA256 signature required by Bybit API.
+    V5 簽名：timestamp + api_key + recv_window + (queryString or jsonBodyString)
     """
-    ordered = sorted(params.items())
-    payload = "&".join([f"{k}={v}" for k, v in ordered])
-    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    to_sign = f"{timestamp}{api_key}{recv_window}{body}"
+    return hmac.new(API_SECRET.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
 
 def get_mid_price() -> float:
     """
-    Fetch the current mid-market price for NXPCUSDT.
+    使用 V5 /v5/market/tickers 獲取最新價格
     """
-    resp = requests.get(f"{BASE_URL}/spot/quote/v1/ticker/price", params={"symbol": PAIR})
+    timestamp = str(int(time.time() * 1000))
+    params = {"category": "spot", "symbol": PAIR}
+    qs = urlencode(params)
+    signature = sign(timestamp, API_KEY, RECV_WINDOW, qs)
+    headers = {
+        "X-BAPI-API-KEY": API_KEY,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": RECV_WINDOW,
+        "X-BAPI-SIGN": signature,
+    }
+    resp = requests.get(f"{BASE_URL}/v5/market/tickers?{qs}", headers=headers)
     data = resp.json()
-    return float(data["result"]["price"])
+    return float(data["result"]["list"][0]["lastPrice"])
 
 def place_limit_order(side: str, qty: float, price: float) -> dict:
     """
-    Place a PostOnly limit order and return the API response.
+    使用 V5 /v5/order/create 下 PostOnly 限價掛單
     """
-    path = "/spot/v1/order"
-    timestamp = int(time.time() * 1000)
-    params = {
-        "apiKey": API_KEY,
+    timestamp = str(int(time.time() * 1000))
+    body = {
+        "category": "spot",
         "symbol": PAIR,
-        "orderType": "LIMIT",
-        "side": side,
+        "side": side.upper(),       # "BUY" 或 "SELL"
+        "orderType": "Limit",
         "qty": str(qty),
         "price": str(price),
-        "timeInForce": "PostOnly",
-        "timestamp": timestamp
+        "timeInForce": "PostOnly"
     }
-    params["sign"] = sign(params, API_SECRET)
-    resp = requests.post(BASE_URL + path, data=params)
+    body_str = json.dumps(body)
+    signature = sign(timestamp, API_KEY, RECV_WINDOW, body_str)
+    headers = {
+        "Content-Type": "application/json",
+        "X-BAPI-API-KEY": API_KEY,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": RECV_WINDOW,
+        "X-BAPI-SIGN": signature,
+    }
+    resp = requests.post(f"{BASE_URL}/v5/order/create", headers=headers, data=body_str)
     return resp.json()
 
 def main():
-    total_volume = 0.0
-    loop_count = 0
+    total_vol = 0.0
+    loops = 0
+    logging.info("V5 Trader started. Target volume: %s USDT", TARGET_VOLUME)
 
-    logging.info("Trader started. Target volume: %s USDT", TARGET_VOLUME)
-
-    while total_volume < TARGET_VOLUME:
+    while total_vol < TARGET_VOLUME:
         try:
             mid = get_mid_price()
-            buy_price = round(mid * (1 - PRICE_SPREAD), 6)
+            buy_price  = round(mid * (1 - PRICE_SPREAD), 6)
             sell_price = round(mid * (1 + PRICE_SPREAD), 6)
             qty = round(ORDER_SIZE / buy_price, 8)
 
-            # Place buy maker order
-            buy_resp = place_limit_order("BUY", qty, buy_price)
+            # 下買單
+            buy_res = place_limit_order("BUY", qty, buy_price)
+            time.sleep(1)
+            # 下賣單
+            sell_res = place_limit_order("SELL", qty, sell_price)
             time.sleep(1)
 
-            # Place sell maker order
-            sell_resp = place_limit_order("SELL", qty, sell_price)
-            time.sleep(1)
-
-            # Update stats
-            total_volume += ORDER_SIZE * 2
-            loop_count += 1
+            total_vol += ORDER_SIZE * 2
+            loops += 1
             logging.info(
-                "Loop %d: BUY %s @ %s, SELL %s @ %s → +%s USDT volume (Total: %s)",
-                loop_count, qty, buy_price, qty, sell_price, ORDER_SIZE*2, total_volume
+                "Loop %d: BUY %s @ %s, SELL %s @ %s → +%s USDT (Total: %s)",
+                loops, qty, buy_price, qty, sell_price, ORDER_SIZE*2, total_vol
             )
-
         except Exception as e:
-            logging.error("Error on loop %d: %s", loop_count, e, exc_info=True)
+            logging.error("Error on loop %d: %s", loops, e, exc_info=True)
             time.sleep(5)
 
-    logging.info("Target volume achieved after %d loops. Exiting.", loop_count)
+    logging.info("Target volume achieved after %d loops. Exiting.", loops)
 
 if __name__ == "__main__":
     main()
