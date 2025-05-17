@@ -1,0 +1,14 @@
+[Unit]
+Description=NXPC V5 Volume Trader Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=on-failure
+ExecStart=/usr/bin/docker run --rm --name nxpc_trader \
+    -e API_KEY=${8auAdibh8y2tPnngHV} -e API_SECRET=${4y5tGfmGz2wZeoSBh6wWwdYAha8J8iQWNo9C} \
+    nxpc-trader:latest
+ExecStop=/usr/bin/docker stop nxpc_trader
+
+[Install]
+WantedBy=multi-user.target
