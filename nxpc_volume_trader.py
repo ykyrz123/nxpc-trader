@@ -26,7 +26,7 @@ BASE_URL    = "https://api.bybit.com"
 PAIR        = "NXPCUSDT"
 RECV_WINDOW = "5000"       # 預設簽名驗證時效
 ORDER_SIZE  = 1000.0       # USDT per side
-TARGET_VOLUME = 466667.0   # USDT total volume target
+TARGET_VOLUME = 4000.0   # USDT total volume target
 PRICE_SPREAD  = 0.0001     # 0.01% 價差
 
 # === Logging Setup ===
