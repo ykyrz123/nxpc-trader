@@ -85,6 +85,8 @@ def place_limit_order(side: str, qty: float, price: float) -> dict:
         "X-BAPI-SIGN": signature,
     }
     resp = requests.post(f"{BASE_URL}/v5/order/create", headers=headers, data=body_str)
+    # 新增：列印 API 回傳完整內容，方便除錯
+    print("Order response:", resp.json())
     return resp.json()
 
 def main():
